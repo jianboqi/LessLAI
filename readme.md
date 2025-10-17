@@ -18,6 +18,7 @@
 ---
 
 ## 3. Installation
+You can directly download the code, since there is only one code file: `less_lai.py` or: 
 ```bash
 git clone https://github.com/YOUR_NAME/LessLAI.git
 cd LessLAI
