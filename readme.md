@@ -76,3 +76,6 @@ Elapsed time: ** s
 ```
 python less_lai.py -i LC09_3bands.tif -o LC09_LAI.tif -sza 32.4 -x l9
 ```
+
+## 8. Others
+less_lai_naive.py is only used for debug
