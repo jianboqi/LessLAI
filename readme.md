@@ -1,5 +1,5 @@
 ## LessLAI  
-**Fast GPU/CPU LUT-based forest Leaf Area Index (LAI) retrieval for Landsat 8/9**
+## **Fast GPU/CPU LUT-based forest Leaf Area Index (LAI) retrieval for Landsat 8/9**
 ---
 
 ### 1. What's LessLAI?
