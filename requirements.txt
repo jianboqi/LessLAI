@@ -1,0 +1,14 @@
+# LessLAI requirements
+# Install: pip install -r requirements.txt
+
+# Core compute backend (GPU/CPU)
+taichi>=1.6.0
+
+# Numerical computing
+numpy>=1.21.0
+
+# Raster I/O
+GDAL>=3.2.0
+
+# Progress bar (optional, for Python-level tiling)
+tqdm>=4.62.0
