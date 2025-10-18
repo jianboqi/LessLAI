@@ -39,7 +39,7 @@ LessLAI/
 │   ├── backup.npy
 │   └── *l9*.npy  (same names for l9)
 ├── examples/
-│   └── Landsat_0618(3bands).tif
+│   └── Landsat8_3bands.tif
 ├── README.md
 └── requirements.txt
 ```
@@ -66,7 +66,7 @@ Elapsed time: ** s
 | `-i`  | `--input`    | ✅       | —       | Input 3-band GeoTIFF (Red, NIR, Landuse)                  |
 | `-o`  | `--output`   | ✅       | —       | Output LAI GeoTIFF                                        |
 | `-sza`| —            | ✅       | —       | Solar zenith angle (degrees) to match in LUT              |
-| `-x`  | `--landsatx` | ❌       | `l8`    | Landsat mission: `l8` or `l9`                             |
+| `--sensor`  | — | ❌       | `l8`    | Landsat mission: `l8` or `l9`                             |
 | `--cpu`| —           | ❌       | GPU     | Force CPU backend (fallback if GPU not available)         |
 
 ## 7. Landsat 9 Example

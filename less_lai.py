@@ -5,6 +5,7 @@ LUT-based LAI retrieval (3-band input: Red/NIR/Landuse)
 Usage:
     python less_lai.py -i input.tif -o lai.tif -sza 25      # GPU
     python less_lai.py -i input.tif -o lai.tif -sza 25 --cpu # CPU
+    python less_lai.py -i input.tif -o lai.tif -sza 25 --cpu --sensor l8
 """
 import taichi as ti
 import numpy as np
@@ -188,12 +189,12 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--output", required=True, help="Output LAI GeoTIFF")
     parser.add_argument("-sza", type=float, required=True, help="Solar zenith angle to keep in LUT (must be provided)")
     parser.add_argument("--cpu", action="store_true", help="Force CPU backend")
-    parser.add_argument("-x", "--landsatx", choices=["l8", "l9"], default="l8",
-                    help="Landsat mission: l8 or l9 (default: l8)")
+    parser.add_argument("--sensor", choices=["l8", "l9"], default="l8",
+                    help="Sensor, e.g., Landsat mission: l8 or l9 (default: l8)")
     args = parser.parse_args()
     
     auto_init(force_cpu=args.cpu)
 
     t0 = time.time()
-    run_lookup(args.input, args.output, args.sza, args.landsatx)
+    run_lookup(args.input, args.output, args.sza, args.sensor)
     print("Elapsed time: %.2f s" % (time.time() - t0))
