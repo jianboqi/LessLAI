@@ -15,8 +15,6 @@ import time
 import sys
 from osgeo import gdal
 
-TOP_N_MAX = 100
-
 # ---------- 1. Auto backend ----------
 def auto_init(force_cpu: bool = False):
     if force_cpu:
@@ -65,62 +63,17 @@ def calc_ndvi(red: ti.f32, nir: ti.f32) -> ti.f32:
 @ti.func
 def add_matches(lut: ti.template(), n: ti.i32,
                 pr: ti.f32, pn: ti.f32,
-                denom_red: ti.f32, denom_nir: ti.f32,
-                top_n: ti.i32) -> ti.types.vector(2, ti.f32):
-    """
-    Return [mean LAI ,  std LAI]
-    std = –1.0  if no sample
-    """
-    # fixed-size buffers (worst-case)
-    lai_buf = ti.Vector.zero(ti.f32, TOP_N_MAX)
-    dsq_buf = ti.Vector.zero(ti.f32, TOP_N_MAX)
-    cnt = 0
-
-    # ---------- collect ----------
+                denom_red: ti.f32, denom_nir: ti.f32) -> ti.types.vector(2, ti.f32):
+    s, c = 0.0, 0.0
     for r in range(n):
         ref_red = lut[r, RED_COL]
         ref_nir = lut[r, NIR_COL]
-        lai = lut[r, LAI_COL]
-        dsq = ((pn - ref_nir) ** 2) / denom_nir + ((pr - ref_red) ** 2) / denom_red
+        lai   = lut[r, LAI_COL]
+        dsq   = ((pn - ref_nir)**2) / denom_nir + ((pr - ref_red)**2) / denom_red
         if dsq <= 2.0:
-            if top_n <= 0:                      # use all
-                if cnt < TOP_N_MAX:
-                    lai_buf[cnt] = lai
-                    dsq_buf[cnt] = dsq
-                    cnt += 1
-            else:                               # keep best top_n
-                if cnt < top_n:                 # still room
-                    lai_buf[cnt] = lai
-                    dsq_buf[cnt] = dsq
-                    cnt += 1
-                else:                           # replace worst
-                    worst_idx = 0
-                    for k in range(1, top_n):
-                        if dsq_buf[k] > dsq_buf[worst_idx]:
-                            worst_idx = k
-                    if dsq < dsq_buf[worst_idx]:        # better than worst
-                        lai_buf[worst_idx] = lai
-                        dsq_buf[worst_idx] = dsq
-                        # bubble worst to the end (simple pass)
-                        for k in range(worst_idx, top_n - 1):
-                            if dsq_buf[k] > dsq_buf[k + 1]:
-                                dsq_buf[k], dsq_buf[k + 1] = dsq_buf[k + 1], dsq_buf[k]
-                                lai_buf[k], lai_buf[k + 1] = lai_buf[k + 1], lai_buf[k]
-                            else:
-                                break
-
-    # ---------- statistics ----------
-    mean, std = -9999.0, -9999.0
-    if cnt > 0:
-        sum_lai = 0.0
-        for k in range(cnt): sum_lai += lai_buf[k]
-        mean = sum_lai / cnt
-
-        sum_sq = 0.0
-        for k in range(cnt): sum_sq += (lai_buf[k] - mean) ** 2
-        std = ti.sqrt(sum_sq / cnt)
-
-    return ti.Vector([mean, std, cnt])
+            s += lai
+            c += 1.0
+    return ti.Vector([s, c])
 
 @ti.func
 def ndvi_to_lai(biome: ti.i32, ndv: ti.f32, rows: ti.i32) -> ti.f32:
@@ -138,48 +91,46 @@ def ndvi_to_lai(biome: ti.i32, ndv: ti.f32, rows: ti.i32) -> ti.f32:
 
 @ti.kernel
 def compute_lai(ebf_len: ti.i32, dbf_len: ti.i32,
-                enf_len: ti.i32, dnf_len: ti.i32, ndvi_rows: ti.i32, top_n: ti.i32):
+                enf_len: ti.i32, dnf_len: ti.i32, ndvi_rows: ti.i32):
     for i, j in output_f:
         biome = code_to_biome(landuse_f[i, j])
-        pr, pn = red_f[i, j], nir_f[i, j]
-        if biome == 0 or pr == 0.0 or pn == 0.0:
+        if biome == 0:
             output_f[i, j] = -9999.0
-            uncert_f[i, j] = -9999.0
+            continue
+        pr, pn = red_f[i, j], nir_f[i, j]
+        if pr == 0.0 or pn == 0.0:
+            output_f[i, j] = -9999.0
             continue
         denom_nir = (0.15 * pn)**2
         denom_red = (0.30 * pr)**2
-        lai, std, cnt = 0.0, 0.0, 0.0
+        s, c = 0.0, 0.0
         if biome == 5:
-            res = add_matches(ebf_f, ebf_len, pr, pn, denom_red, denom_nir, top_n)
-            lai, std, cnt = res[0], res[1], res[2]
+            res = add_matches(ebf_f, ebf_len, pr, pn, denom_red, denom_nir); s, c = res[0], res[1]
         elif biome == 6:
-            res = add_matches(dbf_f, dbf_len, pr, pn, denom_red, denom_nir, top_n)
-            lai, std, cnt = res[0], res[1], res[2]
+            res = add_matches(dbf_f, dbf_len, pr, pn, denom_red, denom_nir); s, c = res[0], res[1]
         elif biome == 7:
-            res = add_matches(enf_f, enf_len, pr, pn, denom_red, denom_nir, top_n)
-            lai, std, cnt = res[0], res[1], res[2]
+            res = add_matches(enf_f, enf_len, pr, pn, denom_red, denom_nir); s, c = res[0], res[1]
         elif biome == 8:
-            res = add_matches(dnf_f, dnf_len, pr, pn, denom_red, denom_nir, top_n)
-            lai, std, cnt = res[0], res[1], res[2]
+            res = add_matches(dnf_f, dnf_len, pr, pn, denom_red, denom_nir); s, c = res[0], res[1]
         elif biome == 9:
-            res_ebf = add_matches(ebf_f, ebf_len, pr, pn, denom_red, denom_nir, top_n)
-            res_dbf = add_matches(dbf_f, dbf_len, pr, pn, denom_red, denom_nir, top_n)
-            res_enf = add_matches(enf_f, enf_len, pr, pn, denom_red, denom_nir, top_n)
-            res_dnf = add_matches(dnf_f, dnf_len, pr, pn, denom_red, denom_nir, top_n)
-            lai = (res_ebf[0] + res_dbf[0] + res_enf[0] + res_dnf[0])*0.25
-            std = (res_ebf[1] + res_dbf[1] + res_enf[1] + res_dnf[1])*0.25
-            cnt = (res_ebf[2] + res_dbf[2] + res_enf[2] + res_dnf[2])*0.25
-        if cnt > 0.0:
-            output_f[i, j] = lai
-            uncert_f[i, j] = std
+            res_ebf = add_matches(ebf_f, ebf_len, pr, pn, denom_red, denom_nir)
+            res_dbf = add_matches(dbf_f, dbf_len, pr, pn, denom_red, denom_nir)
+            res_enf = add_matches(enf_f, enf_len, pr, pn, denom_red, denom_nir)
+            res_dnf = add_matches(dnf_f, dnf_len, pr, pn, denom_red, denom_nir)
+            s_total = res_ebf[0] + res_dbf[0] + res_enf[0] + res_dnf[0]
+            c_total = res_ebf[1] + res_dbf[1] + res_enf[1] + res_dnf[1]
+            if c_total > 0.0:
+                output_f[i, j] = s_total / c_total
+                continue
+        if c > 0.0:
+            output_f[i, j] = s / c
         else:
             ndv = calc_ndvi(pr, pn)
             lai_val = ndvi_to_lai(biome, ndv, ndvi_rows)
             output_f[i, j] = lai_val if lai_val != 0.0 else -9999.0
-            uncert_f[i, j] = -9999.0
 
 # ---------- 5. Main workflow ----------
-def run_lookup(input_tif: str, output_tif: str, sza: float, landsatx: str, top_n: int):
+def run_lookup(input_tif: str, output_tif: str, sza: float, landsatx: str):
     print("Loading LUTs...")
     # Load LUTs
     lut_files = [f"luts/EBF_lut_{landsatx}.npy", f"luts/DBF_lut_{landsatx}.npy",
@@ -204,12 +155,11 @@ def run_lookup(input_tif: str, output_tif: str, sza: float, landsatx: str, top_n
     land_np = ds.GetRasterBand(3).ReadAsArray().astype(np.int32)
 
     # Allocate fields
-    global red_f, nir_f, landuse_f, output_f, uncert_f, ebf_f, dbf_f, enf_f, dnf_f, ndvi_lai_f
+    global red_f, nir_f, landuse_f, output_f, ebf_f, dbf_f, enf_f, dnf_f, ndvi_lai_f
     red_f     = ti.field(ti.f32, shape=(rows, cols)); red_f.from_numpy(red_np)
     nir_f     = ti.field(ti.f32, shape=(rows, cols)); nir_f.from_numpy(nir_np)
     landuse_f = ti.field(ti.i32, shape=(rows, cols)); landuse_f.from_numpy(land_np)
     output_f  = ti.field(ti.f32, shape=(rows, cols))
-    uncert_f = ti.field(ti.f32, shape=(rows, cols))
 
     ebf_f = ti.field(ti.f32, shape=ebf_np.shape); ebf_f.from_numpy(ebf_np)
     dbf_f = ti.field(ti.f32, shape=dbf_np.shape); dbf_f.from_numpy(dbf_np)
@@ -218,21 +168,19 @@ def run_lookup(input_tif: str, output_tif: str, sza: float, landsatx: str, top_n
     ndvi_lai_f = ti.field(ti.f32, shape=ndvi_lai_np.shape); ndvi_lai_f.from_numpy(ndvi_lai_np)
     print("Computing LAI...")
     # Run
-    compute_lai(ebf_np.shape[0], dbf_np.shape[0], enf_np.shape[0], dnf_np.shape[0], ndvi_lai_np.shape[0], top_n)
+    compute_lai(ebf_np.shape[0], dbf_np.shape[0], enf_np.shape[0], dnf_np.shape[0], ndvi_lai_np.shape[0])
 
     # Export
+    out = output_f.to_numpy()
     driver = gdal.GetDriverByName("GTiff")
-    out_ds = driver.Create(output_tif, cols, rows, 2, gdal.GDT_Float32)
+    out_ds = driver.Create(output_tif, cols, rows, 1, gdal.GDT_Float32)
     out_ds.SetGeoTransform(ds.GetGeoTransform())
     out_ds.SetProjection(ds.GetProjection())
-    out_ds.GetRasterBand(1).WriteArray(output_f.to_numpy())
-    out_ds.GetRasterBand(1).SetNoDataValue(-9999.0)
-    out_ds.GetRasterBand(1).SetDescription("LAI")
-    out_ds.GetRasterBand(2).WriteArray(uncert_f.to_numpy())
-    out_ds.GetRasterBand(2).SetNoDataValue(-9999.0)
-    out_ds.GetRasterBand(2).SetDescription("LAI_uncertainty_std")
+    band = out_ds.GetRasterBand(1)
+    band.WriteArray(out)
+    band.SetNoDataValue(-9999.0)
     out_ds.FlushCache()
-    print(f"Done -> {output_tif}  (SZA={sza}°, top_n={top_n})")
+    print(f"Processing complete -> {output_tif}  (SZA={sza}°)")
 
 # ---------- 6. CLI ----------
 if __name__ == "__main__":
@@ -243,11 +191,10 @@ if __name__ == "__main__":
     parser.add_argument("--cpu", action="store_true", help="Force CPU backend")
     parser.add_argument("--sensor", choices=["L8", "L9"], default="L8",
                     help="Sensor, e.g., Landsat mission: L8 or L9 (default: L8)")
-    parser.add_argument("--top_n", type=int, default=0, help="Top-N closest samples (0 = use all, default: 0)")
     args = parser.parse_args()
     
     auto_init(force_cpu=args.cpu)
 
     t0 = time.time()
-    run_lookup(args.input, args.output, args.sza, args.sensor, args.top_n)
+    run_lookup(args.input, args.output, args.sza, args.sensor)
     print("Elapsed time: %.2f s" % (time.time() - t0))
