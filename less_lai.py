@@ -130,6 +130,7 @@ def compute_lai(ebf_len: ti.i32, dbf_len: ti.i32,
 
 # ---------- 5. Main workflow ----------
 def run_lookup(input_tif: str, output_tif: str, sza: float, landsatx: str):
+    print("Loading LUTs...")
     # Load LUTs
     lut_files = [f"luts/EBF_lut_{landsatx}.npy", f"luts/DBF_lut_{landsatx}.npy",
     f"luts/ENF_lut_{landsatx}.npy", f"luts/DNF_lut_{landsatx}.npy",
@@ -164,7 +165,7 @@ def run_lookup(input_tif: str, output_tif: str, sza: float, landsatx: str):
     enf_f = ti.field(ti.f32, shape=enf_np.shape); enf_f.from_numpy(enf_np)
     dnf_f = ti.field(ti.f32, shape=dnf_np.shape); dnf_f.from_numpy(dnf_np)
     ndvi_lai_f = ti.field(ti.f32, shape=ndvi_lai_np.shape); ndvi_lai_f.from_numpy(ndvi_lai_np)
-
+    print("Computing LAI...")
     # Run
     compute_lai(ebf_np.shape[0], dbf_np.shape[0], enf_np.shape[0], dnf_np.shape[0], ndvi_lai_np.shape[0])
 
