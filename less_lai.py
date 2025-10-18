@@ -15,7 +15,7 @@ import time
 import sys
 from osgeo import gdal
 
-TOP_N_MAX = 1000
+TOP_N_MAX = 100
 
 # ---------- 1. Auto backend ----------
 def auto_init(force_cpu: bool = False):
@@ -141,12 +141,10 @@ def compute_lai(ebf_len: ti.i32, dbf_len: ti.i32,
                 enf_len: ti.i32, dnf_len: ti.i32, ndvi_rows: ti.i32, top_n: ti.i32):
     for i, j in output_f:
         biome = code_to_biome(landuse_f[i, j])
-        if biome == 0:
-            output_f[i, j] = -9999.0
-            continue
         pr, pn = red_f[i, j], nir_f[i, j]
-        if pr == 0.0 or pn == 0.0:
+        if biome == 0 or pr == 0.0 or pn == 0.0:
             output_f[i, j] = -9999.0
+            uncert_f[i, j] = -9999.0
             continue
         denom_nir = (0.15 * pn)**2
         denom_red = (0.30 * pr)**2
@@ -173,10 +171,12 @@ def compute_lai(ebf_len: ti.i32, dbf_len: ti.i32,
             cnt = (res_ebf[2] + res_dbf[2] + res_enf[2] + res_dnf[2])*0.25
         if cnt > 0.0:
             output_f[i, j] = lai
+            uncert_f[i, j] = std
         else:
             ndv = calc_ndvi(pr, pn)
             lai_val = ndvi_to_lai(biome, ndv, ndvi_rows)
             output_f[i, j] = lai_val if lai_val != 0.0 else -9999.0
+            uncert_f[i, j] = -9999.0
 
 # ---------- 5. Main workflow ----------
 def run_lookup(input_tif: str, output_tif: str, sza: float, landsatx: str, top_n: int):
@@ -204,11 +204,12 @@ def run_lookup(input_tif: str, output_tif: str, sza: float, landsatx: str, top_n
     land_np = ds.GetRasterBand(3).ReadAsArray().astype(np.int32)
 
     # Allocate fields
-    global red_f, nir_f, landuse_f, output_f, ebf_f, dbf_f, enf_f, dnf_f, ndvi_lai_f
+    global red_f, nir_f, landuse_f, output_f, uncert_f, ebf_f, dbf_f, enf_f, dnf_f, ndvi_lai_f
     red_f     = ti.field(ti.f32, shape=(rows, cols)); red_f.from_numpy(red_np)
     nir_f     = ti.field(ti.f32, shape=(rows, cols)); nir_f.from_numpy(nir_np)
     landuse_f = ti.field(ti.i32, shape=(rows, cols)); landuse_f.from_numpy(land_np)
     output_f  = ti.field(ti.f32, shape=(rows, cols))
+    uncert_f = ti.field(ti.f32, shape=(rows, cols))
 
     ebf_f = ti.field(ti.f32, shape=ebf_np.shape); ebf_f.from_numpy(ebf_np)
     dbf_f = ti.field(ti.f32, shape=dbf_np.shape); dbf_f.from_numpy(dbf_np)
@@ -220,16 +221,18 @@ def run_lookup(input_tif: str, output_tif: str, sza: float, landsatx: str, top_n
     compute_lai(ebf_np.shape[0], dbf_np.shape[0], enf_np.shape[0], dnf_np.shape[0], ndvi_lai_np.shape[0], top_n)
 
     # Export
-    out = output_f.to_numpy()
     driver = gdal.GetDriverByName("GTiff")
-    out_ds = driver.Create(output_tif, cols, rows, 1, gdal.GDT_Float32)
+    out_ds = driver.Create(output_tif, cols, rows, 2, gdal.GDT_Float32)
     out_ds.SetGeoTransform(ds.GetGeoTransform())
     out_ds.SetProjection(ds.GetProjection())
-    band = out_ds.GetRasterBand(1)
-    band.WriteArray(out)
-    band.SetNoDataValue(-9999.0)
+    out_ds.GetRasterBand(1).WriteArray(output_f.to_numpy())
+    out_ds.GetRasterBand(1).SetNoDataValue(-9999.0)
+    out_ds.GetRasterBand(1).SetDescription("LAI")
+    out_ds.GetRasterBand(2).WriteArray(uncert_f.to_numpy())
+    out_ds.GetRasterBand(2).SetNoDataValue(-9999.0)
+    out_ds.GetRasterBand(2).SetDescription("LAI_uncertainty_std")
     out_ds.FlushCache()
-    print(f"Processing complete -> {output_tif}  (SZA={sza}°)")
+    print(f"Done -> {output_tif}  (SZA={sza}°, top_n={top_n})")
 
 # ---------- 6. CLI ----------
 if __name__ == "__main__":
