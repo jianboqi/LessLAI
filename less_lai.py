@@ -5,7 +5,7 @@ LUT-based LAI retrieval (3-band input: Red/NIR/Landuse)
 Usage:
     python less_lai.py -i input.tif -o lai.tif -sza 25      # GPU
     python less_lai.py -i input.tif -o lai.tif -sza 25 --cpu # CPU
-    python less_lai.py -i input.tif -o lai.tif -sza 25 --cpu --sensor l8
+    python less_lai.py -i input.tif -o lai.tif -sza 25 --cpu --sensor L8
 """
 import taichi as ti
 import numpy as np
@@ -60,20 +60,25 @@ def code_to_biome(code: ti.i32) -> ti.i32:
 def calc_ndvi(red: ti.f32, nir: ti.f32) -> ti.f32:
     return (nir - red) / (nir + red + 1e-6)
 
+
 @ti.func
 def add_matches(lut: ti.template(), n: ti.i32,
                 pr: ti.f32, pn: ti.f32,
-                denom_red: ti.f32, denom_nir: ti.f32) -> ti.types.vector(2, ti.f32):
+                denom_red: ti.f32, denom_nir: ti.f32,
+                need_ssq: ti.template()) -> ti.types.vector(3, ti.f32):
     s, c = 0.0, 0.0
+    ssq = 0.0  # 只有 need_ssq=True 时才累加
     for r in range(n):
         ref_red = lut[r, RED_COL]
         ref_nir = lut[r, NIR_COL]
-        lai   = lut[r, LAI_COL]
-        dsq   = ((pn - ref_nir)**2) / denom_nir + ((pr - ref_red)**2) / denom_red
+        lai = lut[r, LAI_COL]
+        dsq = ((pn - ref_nir)**2) / denom_nir + ((pr - ref_red)**2) / denom_red
         if dsq <= 2.0:
             s += lai
             c += 1.0
-    return ti.Vector([s, c])
+            if ti.static(need_ssq):      # 编译期剪掉
+                ssq += lai * lai
+    return ti.Vector([s, c, ssq])
 
 @ti.func
 def ndvi_to_lai(biome: ti.i32, ndv: ti.f32, rows: ti.i32) -> ti.f32:
@@ -91,46 +96,66 @@ def ndvi_to_lai(biome: ti.i32, ndv: ti.f32, rows: ti.i32) -> ti.f32:
 
 @ti.kernel
 def compute_lai(ebf_len: ti.i32, dbf_len: ti.i32,
-                enf_len: ti.i32, dnf_len: ti.i32, ndvi_rows: ti.i32):
+                enf_len: ti.i32, dnf_len: ti.i32, ndvi_rows: ti.i32, want_std: ti.template()):
     for i, j in output_f:
         biome = code_to_biome(landuse_f[i, j])
         if biome == 0:
             output_f[i, j] = -9999.0
+            if ti.static(want_std):
+                output_std_f[i, j] = -9999.0
             continue
         pr, pn = red_f[i, j], nir_f[i, j]
         if pr == 0.0 or pn == 0.0:
             output_f[i, j] = -9999.0
+            if ti.static(want_std):
+                output_std_f[i, j] = -9999.0
             continue
         denom_nir = (0.15 * pn)**2
         denom_red = (0.30 * pr)**2
-        s, c = 0.0, 0.0
+        s, c, ssq = 0.0, 0.0, 0.0
+        need_ssq = ti.static(want_std)
         if biome == 5:
-            res = add_matches(ebf_f, ebf_len, pr, pn, denom_red, denom_nir); s, c = res[0], res[1]
+            res = add_matches(ebf_f, ebf_len, pr, pn, denom_red, denom_nir, need_ssq)
+            s, c, ssq = res[0], res[1], res[2]
         elif biome == 6:
-            res = add_matches(dbf_f, dbf_len, pr, pn, denom_red, denom_nir); s, c = res[0], res[1]
+            res = add_matches(dbf_f, dbf_len, pr, pn, denom_red, denom_nir, need_ssq)
+            s, c, ssq = res[0], res[1], res[2]
         elif biome == 7:
-            res = add_matches(enf_f, enf_len, pr, pn, denom_red, denom_nir); s, c = res[0], res[1]
+            res = add_matches(enf_f, enf_len, pr, pn, denom_red, denom_nir, need_ssq)
+            s, c, ssq = res[0], res[1], res[2]
         elif biome == 8:
-            res = add_matches(dnf_f, dnf_len, pr, pn, denom_red, denom_nir); s, c = res[0], res[1]
+            res = add_matches(dnf_f, dnf_len, pr, pn, denom_red, denom_nir, need_ssq)
+            s, c, ssq = res[0], res[1], res[2]
         elif biome == 9:
-            res_ebf = add_matches(ebf_f, ebf_len, pr, pn, denom_red, denom_nir)
-            res_dbf = add_matches(dbf_f, dbf_len, pr, pn, denom_red, denom_nir)
-            res_enf = add_matches(enf_f, enf_len, pr, pn, denom_red, denom_nir)
-            res_dnf = add_matches(dnf_f, dnf_len, pr, pn, denom_red, denom_nir)
+            res_ebf = add_matches(ebf_f, ebf_len, pr, pn, denom_red, denom_nir, need_ssq)
+            res_dbf = add_matches(dbf_f, dbf_len, pr, pn, denom_red, denom_nir, need_ssq)
+            res_enf = add_matches(enf_f, enf_len, pr, pn, denom_red, denom_nir, need_ssq)
+            res_dnf = add_matches(dnf_f, dnf_len, pr, pn, denom_red, denom_nir, need_ssq)
             s_total = res_ebf[0] + res_dbf[0] + res_enf[0] + res_dnf[0]
             c_total = res_ebf[1] + res_dbf[1] + res_enf[1] + res_dnf[1]
+            ssq_total = res_ebf[2] + res_dbf[2] + res_enf[2] + res_dnf[2]
             if c_total > 0.0:
-                output_f[i, j] = s_total / c_total
+                mean = s_total / c_total
+                output_f[i, j] = mean
+                if ti.static(want_std):
+                    var = ssq_total / c_total - mean * mean
+                    output_std_f[i, j] = ti.sqrt(ti.max(var, 0.0))
                 continue
         if c > 0.0:
-            output_f[i, j] = s / c
+            mean = s / c
+            output_f[i, j] = mean
+            if ti.static(want_std):
+                var = ssq / c - mean * mean
+                output_std_f[i, j] = ti.sqrt(ti.max(var, 0.0))
         else:
             ndv = calc_ndvi(pr, pn)
             lai_val = ndvi_to_lai(biome, ndv, ndvi_rows)
             output_f[i, j] = lai_val if lai_val != 0.0 else -9999.0
+            if ti.static(want_std):
+                output_std_f[i, j] = -9999.0
 
 # ---------- 5. Main workflow ----------
-def run_lookup(input_tif: str, output_tif: str, sza: float, landsatx: str):
+def run_lookup(input_tif: str, output_tif: str, sza: float, landsatx: str, want_std: bool = False):
     print("Loading LUTs...")
     # Load LUTs
     lut_files = [f"luts/EBF_lut_{landsatx}.npy", f"luts/DBF_lut_{landsatx}.npy",
@@ -156,10 +181,15 @@ def run_lookup(input_tif: str, output_tif: str, sza: float, landsatx: str):
 
     # Allocate fields
     global red_f, nir_f, landuse_f, output_f, ebf_f, dbf_f, enf_f, dnf_f, ndvi_lai_f
+    global output_std_f  # new added
     red_f     = ti.field(ti.f32, shape=(rows, cols)); red_f.from_numpy(red_np)
     nir_f     = ti.field(ti.f32, shape=(rows, cols)); nir_f.from_numpy(nir_np)
     landuse_f = ti.field(ti.i32, shape=(rows, cols)); landuse_f.from_numpy(land_np)
     output_f  = ti.field(ti.f32, shape=(rows, cols))
+    if want_std:
+        output_std_f = ti.field(ti.f32, shape=(rows, cols))
+    else:
+        output_std_f = ti.field(ti.f32, shape=(1, 1))
 
     ebf_f = ti.field(ti.f32, shape=ebf_np.shape); ebf_f.from_numpy(ebf_np)
     dbf_f = ti.field(ti.f32, shape=dbf_np.shape); dbf_f.from_numpy(dbf_np)
@@ -168,17 +198,23 @@ def run_lookup(input_tif: str, output_tif: str, sza: float, landsatx: str):
     ndvi_lai_f = ti.field(ti.f32, shape=ndvi_lai_np.shape); ndvi_lai_f.from_numpy(ndvi_lai_np)
     print("Computing LAI...")
     # Run
-    compute_lai(ebf_np.shape[0], dbf_np.shape[0], enf_np.shape[0], dnf_np.shape[0], ndvi_lai_np.shape[0])
+    compute_lai(ebf_np.shape[0], dbf_np.shape[0], enf_np.shape[0], dnf_np.shape[0], ndvi_lai_np.shape[0], want_std)
 
     # Export
     out = output_f.to_numpy()
     driver = gdal.GetDriverByName("GTiff")
-    out_ds = driver.Create(output_tif, cols, rows, 1, gdal.GDT_Float32)
+    out_ds = driver.Create(output_tif, cols, rows,
+                           2 if want_std else 1, gdal.GDT_Float32)
     out_ds.SetGeoTransform(ds.GetGeoTransform())
     out_ds.SetProjection(ds.GetProjection())
-    band = out_ds.GetRasterBand(1)
-    band.WriteArray(out)
-    band.SetNoDataValue(-9999.0)
+    band1 = out_ds.GetRasterBand(1)
+    band1.WriteArray(out)
+    band1.SetNoDataValue(-9999.0)
+    if want_std:
+        out_std = output_std_f.to_numpy()
+        band2 = out_ds.GetRasterBand(2)
+        band2.WriteArray(out_std)
+        band2.SetNoDataValue(-9999.0)
     out_ds.FlushCache()
     print(f"Processing complete -> {output_tif}  (SZA={sza}°)")
 
@@ -191,10 +227,12 @@ if __name__ == "__main__":
     parser.add_argument("--cpu", action="store_true", help="Force CPU backend")
     parser.add_argument("--sensor", choices=["L8", "L9"], default="L8",
                     help="Sensor, e.g., Landsat mission: L8 or L9 (default: L8)")
+    parser.add_argument("--std", action="store_true", default=False,
+                        help="Also output LAI std-dev as 2nd band")
     args = parser.parse_args()
     
     auto_init(force_cpu=args.cpu)
 
     t0 = time.time()
-    run_lookup(args.input, args.output, args.sza, args.sensor)
+    run_lookup(args.input, args.output, args.sza, args.sensor, want_std=args.std)
     print("Elapsed time: %.2f s" % (time.time() - t0))
