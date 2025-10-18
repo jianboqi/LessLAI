@@ -9,7 +9,7 @@
 
 ## 2. Features
 - 🚀 **GPU acceleration** (Taichi) with **CPU fallback**  
-- 🛰️ **Landsat 8 & 9 ready** – one switch (`-x l8/l9`)  
+- 🛰️ **Landsat 8 & 9 ready** – one switch (`--sensor L8/L9`)  
 - 📦 **Pure Python** – no compiled binaries, cross-platform  
 - ⚡ **Single command** – zero configuration for quick tests
 
@@ -32,12 +32,12 @@ pip install -r requirements.txt   # taichi numpy gdal
 LessLAI/
 ├── less_lai.py                 # main script
 ├── luts/                       # angle-aware LUTs
-│   ├── EBF_lut_l8.npy
-│   ├── DBF_lut_l8.npy
-│   ├── ENF_lut_l8.npy
-│   ├── DNF_lut_l8.npy
+│   ├── EBF_lut_L8.npy
+│   ├── DBF_lut_L8.npy
+│   ├── ENF_lut_L8.npy
+│   ├── DNF_lut_L8.npy
 │   ├── backup.npy
-│   └── *l9*.npy  (same names for l9)
+│   └── *L9*.npy  (same names for L9)
 ├── examples/
 │   └── Landsat8_3bands.tif
 ├── README.md
@@ -66,12 +66,12 @@ Elapsed time: ** s
 | `-i`  | `--input`    | ✅       | —       | Input 3-band GeoTIFF (Red, NIR, Landuse)                  |
 | `-o`  | `--output`   | ✅       | —       | Output LAI GeoTIFF                                        |
 | `-sza`| —            | ✅       | —       | Solar zenith angle (degrees) to match in LUT              |
-| `--sensor`  | — | ❌       | `l8`    | Landsat mission: `l8` or `l9`                             |
+| `--sensor`  | — | ❌       | `L8`    | Landsat mission: `L8` or `L9`                             |
 | `--cpu`| —           | ❌       | GPU     | Force CPU backend (fallback if GPU not available)         |
 
 ## 7. Landsat 9 Example
 ```
-python less_lai.py -i LC09_3bands.tif -o LC09_LAI.tif -sza 32.4 -x l9
+python less_lai.py -i L09_3bands.tif -o LC09_LAI.tif -sza 32.4 --sensor L9
 ```
 
 ## 8. Others

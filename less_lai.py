@@ -189,8 +189,8 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--output", required=True, help="Output LAI GeoTIFF")
     parser.add_argument("-sza", type=float, required=True, help="Solar zenith angle to keep in LUT (must be provided)")
     parser.add_argument("--cpu", action="store_true", help="Force CPU backend")
-    parser.add_argument("--sensor", choices=["l8", "l9"], default="l8",
-                    help="Sensor, e.g., Landsat mission: l8 or l9 (default: l8)")
+    parser.add_argument("--sensor", choices=["L8", "L9"], default="L8",
+                    help="Sensor, e.g., Landsat mission: L8 or L9 (default: L8)")
     args = parser.parse_args()
     
     auto_init(force_cpu=args.cpu)
